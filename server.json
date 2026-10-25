@@ -3,7 +3,7 @@
   "name": "io.github.WaHaiLong/kingdee-mcp",
   "title": "Kingdee K3Cloud (Cloud Galaxy) ERP",
   "description": "Third-party open-source MCP server for Kingdee K3Cloud ERP - 101 tools, 17 domains. Unofficial.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "repository": {
     "url": "https://github.com/WaHaiLong/KingdeeMCP",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "kingdee-mcp",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "transport": {
         "type": "stdio"
       },
