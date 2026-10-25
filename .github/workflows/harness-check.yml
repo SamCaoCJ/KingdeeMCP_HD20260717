@@ -35,7 +35,7 @@ jobs:
           python scripts/check_harness.py --rules
 
       - name: Run unit tests
-        run: python -m pytest tests/test_server.py -v
+        run: python -m pytest tests/test_server.py tests/test_no_fid_basedata.py -v
 
       # 回归测试：每条都对应一个真实用户 issue，必须在 CI 里跑，
       # 否则测试文件躺在仓库里也拦不住回退。
