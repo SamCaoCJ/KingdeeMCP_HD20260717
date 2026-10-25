@@ -57,7 +57,7 @@ AI 会自动调用金蝶 API 完成操作，无需手动登录 ERP 界面。
 
 ## 功能特性
 
-- **99 个工具**：覆盖生产、成本、资产、审计、采购、销售、库存、财务、委外加工等 16 大业务域
+- **101 个工具**：覆盖生产、成本、资产、审计、采购、销售、库存、单据附件、财务、委外加工、财务报表等 17 大业务域
 - **元数据动态查询**：`get_bill_template` / `validate_bill` / `refresh_metadata`，元数据本地缓存
 - **4 个 SQL Server 探查工具**：搜索表、搜索字段、查看表结构、金蝶元数据候选发现
 - **自然语言操作**：用中文直接描述需求，AI 自动转换为 API 调用
@@ -195,6 +195,7 @@ docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ -
 | `KINGDEE_ACCT_ID` | 账套ID | `your-acct-id` |
 | `KINGDEE_USERNAME` | 金蝶账号 | `your-username` |
 | `KINGDEE_PASSWORD` | 金蝶账号密码（ValidateUser 登录，必填） | `your-password` |
+| `KINGDEE_ATTACHMENT_TIMEOUT` | 附件传输读写等待时间（秒，可选，默认 120；连接超时仍为 30） | `120` |
 | `MCP_SQLSERVER_HOST` | SQL Server 主机（可选，用于数据库探查） | `localhost` |
 | `MCP_SQLSERVER_PORT` | SQL Server 端口（默认 1433） | `1433` |
 | `MCP_SQLSERVER_DATABASE` | 数据库名 | `AIS20260309171043` |
@@ -215,7 +216,7 @@ docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ -
 
 ## 可用工具列表
 
-共 **99 个工具**，按业务域分组（每组列出代表性工具，完整清单见 `src/kingdee_mcp/server.py`）：
+共 **101 个工具**，按业务域分组（每组列出代表性工具，完整清单见 `src/kingdee_mcp/server.py`）：
 
 | 业务域 | 数量 | 代表性工具 |
 |--------|------|-----------|
@@ -234,6 +235,7 @@ docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ -
 | 系统/其他 | 8 | `kingdee_query_system_config` · `kingdee_query_quality_inspections` · `kingdee_query_expense_reimburse` · `kingdee_query_number_rule` · `kingdee_query_loan_balance` · `kingdee_query_data_backup` |
 | 统计 | 2 | `kingdee_usage_stats` · `kingdee_usage_report` |
 | 财务报表 | 1 | `kingdee_query_report`（GetSysReportData 专用端点，查科目余额表/账龄分析表等总账报表） |
+| 单据附件 | 2 | `kingdee_upload_attachment` · `kingdee_download_attachment`（表头/分录附件、分块传输） |
 | 财务收款 | 1 | `kingdee_query_receipts`（收款单 AR_Receivable：实收金额/结算方式/核销金额） |
 
 > 元数据探查含 4 个 SQL Server 工具（`kingdee_discover_tables` / `kingdee_discover_columns` / `kingdee_describe_table` / `kingdee_discover_metadata_candidates`），需配置 `MCP_SQLSERVER_*` 环境变量。
@@ -271,6 +273,16 @@ docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ -
 | `kingdee_audit_bills` | 审核单据 |
 | `kingdee_unaudit_bills` | 反审核单据 |
 | `kingdee_delete_bills` | 删除单据 |
+
+### 单据附件（WebAPI V6.0）
+
+| 工具名称 | 功能说明 |
+|----------|---------|
+| `kingdee_upload_attachment` | 上传 Base64 内容并绑定已存在的单据头或分录；单块最多 4 MiB，支持 FileId 续传 |
+| `kingdee_download_attachment` | 按 FileId 下载一块附件，返回 Base64、下一块位置和完成标志 |
+
+附件工具不读写 MCP 服务器上的本地文件。上传完成不会自动提交或审核单据。
+使用方式、字段映射和失败恢复见 [单据附件示例](./examples/bill-attachments.md)。
 
 ## 使用示例
 

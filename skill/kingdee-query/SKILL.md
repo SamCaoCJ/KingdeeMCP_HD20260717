@@ -53,8 +53,9 @@ description: 基于已连接的 kingdee-mcp（第三方开源金蝶云星空 MCP
 | 委外加工 | 1 | `kingdee_query_outsource_orders` | 委外订单：在制量/逾期/回货交期 |
 | 财务报表 | 1 | `kingdee_query_report` | 科目余额表、账龄分析表等总账报表 |
 | 财务收款 | 1 | `kingdee_query_receipts` | 收款单：实收金额/结算方式/核销金额 |
+| 单据附件 | 2 | `kingdee_upload_attachment` · `kingdee_download_attachment` | 表头/分录附件上传下载（分块传输） |
 
-> 完整 99 个工具见 `src/kingdee_mcp/server.py`。元数据探查含 4 个 SQL Server 工具（`kingdee_discover_tables` / `kingdee_discover_columns` / `kingdee_describe_table` / `kingdee_discover_metadata_candidates`），需配置 `MCP_SQLSERVER_*`。
+> 完整 101 个工具见 `src/kingdee_mcp/server.py`。元数据探查含 4 个 SQL Server 工具（`kingdee_discover_tables` / `kingdee_discover_columns` / `kingdee_describe_table` / `kingdee_discover_metadata_candidates`），需配置 `MCP_SQLSERVER_*`。
 
 ## 四、使用约定
 
