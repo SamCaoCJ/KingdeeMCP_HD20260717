@@ -4,11 +4,21 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-> 当前 PyPI 版本：`0.2.3`（见 `pyproject.toml`）。本文件按功能里程碑汇总。自 `v0.2.2` 起改为打 git tag 触发自动发布。
+> 当前 PyPI 版本：`0.2.4`（见 `pyproject.toml`）。本文件按功能里程碑汇总。自 `v0.2.2` 起改为打 git tag 触发自动发布。
 
 ---
 
-## [Unreleased]
+## [0.2.4] - 2026-10-25
+
+### Added（新增）
+
+- **字段名修正的可见性**（issue #9）：`kingdee_save_bill` / `kingdee_validate_bill` 返回的 `auto_fixes` 现在每条都带中文字段名（`to_zh`），直接告诉用户「改了什么、这个字段是什么意思」，不再让人对着英文字段名猜。
+- **无法识别字段会被报出来**（issue #9）：此前既不是有效字段、又没能自动匹配的字段会被**静默丢弃** —— 用户以为传进去了，金蝶那边根本没这个字段。现在 `validate_and_fix` 多返回一个 `unknown_fields` 列表，`save_bill` / `validate_bill` 都会把它带回结果，并给出「用 `kingdee_get_fields` 查真实字段名」的建议。字段本身**原样保留**（不做任何数据改写），由 `unknown_fields` 负责告知用户；保存失败时结果里额外带 `field_hint`，直接指向字段问题。
+- **错误信息中文化**：金蝶返回的错误消息里如果出现英文字段名（`FCustId` / `FMaterialId` / `FQty` …），现在会被替换成「中文名(字段名)」形式（如 `客户(FCustId)`），错误对象新增 `raw_message` 保留原文、`field_zh` 给出字段中文名。
+
+### Fixed（修复）
+
+- **`kingdee_save_production_order` 补上字段名自动修正**：此前只有 `kingdee_save_bill` 走元数据纠错，生产订单保存时字段名写错会直接被金蝶拒绝、没有任何提示。现在与 `save_bill` 同口径 —— 自动修正 + 报出无法识别的字段。
 
 ---
 

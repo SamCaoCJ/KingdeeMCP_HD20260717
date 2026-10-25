@@ -444,6 +444,113 @@ def _match_known_pattern(message: str) -> Optional[dict]:
     return None
 
 
+# ─────────────────────────────────────────────
+# 字段名中文对照（高频基础字段）
+#
+# 为什么需要：报错的原始信息里只有英文字段名（FCustId / FMaterialId…），
+# 新手根本看不懂「FCustId」是什么。这一层把高频字段翻成中文，
+# 让错误信息直接说人话。表内实际字段仍以 kingdee_get_fields 为准。
+# ─────────────────────────────────────────────
+FIELD_LABELS: dict[str, str] = {
+    # 客户 / 供应商
+    "FCustId": "客户", "FCUSTID": "客户", "FCustomerId": "客户",
+    "FSupplierId": "供应商", "FSupplierId.FNumber": "供应商编码",
+    # 物料 / 单位
+    "FMaterialId": "物料", "FMaterialId.FNumber": "物料编码",
+    "FUnitID": "单位", "FUnitId": "单位", "FUnitID.FName": "单位名称",
+    # 组织 / 部门
+    "FSaleOrgId": "销售组织", "FSalesOrgId": "销售组织",
+    "FPurchaseOrgId": "采购组织", "FDeptId": "部门",
+    "FPurchaseDeptId": "采购部门", "FSaleDeptId": "销售部门",
+    "FStockOrgId": "库存组织", "FManufactureOrgId": "生产组织",
+    # 金额 / 数量 / 单价
+    "FQty": "数量", "FPrice": "单价", "FTaxPrice": "含税单价",
+    "FAmount": "金额", "FTaxAmount": "含税金额",
+    "FAllAmount": "价税合计", "FAuxPrice": "辅助单价",
+    "FExchangeRate": "汇率", "FFCurrencyId": "结算币别",
+    "FSettleCurrId": "结算币别", "FPayCurrencyId": "付款币别",
+    # 日期
+    "FDate": "单据日期", "FCreateDate": "创建日期",
+    "FPlanStartDate": "计划开工日期", "FPlanFinishDate": "计划完工日期",
+    "FDeliveryDate": "交货日期", "FFinishDate": "完工日期",
+    # 单据标识
+    "FBillNo": "单据编号", "FID": "内码", "FNumber": "编码",
+    "FDocumentStatus": "单据状态", "FBillTypeID": "单据类型",
+    # 库存
+    "FStockId": "仓库", "FStockName": "仓库名称",
+    "FRealQty": "实际数量", "FSourceQty": "来源数量",
+}
+
+
+# 字段名替换用的编译正则：一次扫描完成，且长名优先。
+#
+# 为什么不用逐个 str.replace：旧实现按长度倒序逐个替换，先替换长名、
+# 后替换短名，短名会命中长名替换后残留在括号里的文本，于是
+#   "FMaterialId.FNumber" → "物料编码(物料(FMaterialId).编码(FNumber))"
+# 这种嵌套垃圾。单次扫描 + 长名优先可根治。
+#
+# wrapped 分支识别「中文(字段名)」这种已翻译形态并原样保留，
+# 使 _humanize_error_message 具备幂等性（重复调用不会二次包装）。
+_FIELD_LABELS_RE = re.compile(
+    "(?P<wrapped>"
+    + "|".join(
+        re.escape(f"{zh}({en})")
+        for en, zh in sorted(
+            FIELD_LABELS.items(), key=lambda kv: len(kv[1]) + len(kv[0]), reverse=True
+        )
+    )
+    + ")|(?P<bare>"
+    + "|".join(re.escape(en) for en in sorted(FIELD_LABELS, key=len, reverse=True))
+    + ")"
+)
+
+
+def _zh_field(field_name: str) -> str:
+    """把英文字段名翻成中文说明（找不到就原样返回）。"""
+    if not field_name:
+        return ""
+    if field_name in FIELD_LABELS:
+        return FIELD_LABELS[field_name]
+    # 处理带 .FNumber / .FName 后缀的写法
+    if "." in field_name:
+        base, suffix = field_name.split(".", 1)
+        if base in FIELD_LABELS:
+            tail = {"FNumber": "编码", "FName": "名称", "FId": "内码"}.get(suffix, suffix)
+            return f"{FIELD_LABELS[base]}{tail}"
+    # 去掉 F 前缀做一次宽松匹配（FOldQty → 数量）
+    stripped = field_name[1:] if field_name.startswith("F") else field_name
+    for k, v in FIELD_LABELS.items():
+        if k.lower() == stripped.lower():
+            return v
+    return ""
+
+
+def _humanize_error_message(message: str, field_name: str = "") -> str:
+    """把金蝶原始错误消息改写成中文人话。
+
+    做法：把消息里出现的英文字段名替换成「中文名(字段名)」，
+    并在有对应字段时追加一句建议。原始消息保留在 raw_message 里。
+
+    幂等：已翻译的「中文(字段名)」片段会原样保留，重复调用不会二次包装。
+    """
+    if not message:
+        return message
+
+    def _replace(m: re.Match) -> str:
+        if m.group("wrapped"):
+            return m.group(0)
+        en = m.group("bare")
+        return f"{FIELD_LABELS[en]}({en})"
+
+    text = _FIELD_LABELS_RE.sub(_replace, message)
+    # 消息里没出现词典里的字段，但错误本身指定了字段
+    if field_name and field_name not in text:
+        zh = _zh_field(field_name)
+        if zh:
+            text = f"{text}（涉及字段：{zh}({field_name})）"
+    return text
+
+
 def _parse_kingdee_errors(result: Any) -> list:
     """从 Kingdee API 响应中提取业务错误（反馈层核心函数）。
 
@@ -462,28 +569,33 @@ def _parse_kingdee_errors(result: Any) -> list:
                 if key in seen:
                     continue
                 seen.add(key)
+                raw_msg = msg
+                field_name = err.get("FieldName", "")
                 errors.append({
-                    "message": msg,
+                    "message": _humanize_error_message(raw_msg, field_name),
+                    "raw_message": raw_msg,
                     "detail": err.get("Dsc", ""),
-                    "field": err.get("FieldName", ""),
-                    "matched": _match_known_pattern(msg),
+                    "field": field_name,
+                    "field_zh": _zh_field(field_name),
+                    "matched": _match_known_pattern(raw_msg),
                 })
         # Push 操作特有的 ConvertResponseStatus —— 逐行也走 pattern 匹配
         conv = rs.get("ConvertResponseStatus", [])
         if conv:
             for i, c in enumerate(conv):
                 if not c.get("IsSuccess", True):
-                    msg = c.get("Message", "转换失败")
-                    key = (i, msg)
+                    raw_msg = c.get("Message", "转换失败")
+                    key = (i, raw_msg)
                     if key in seen:
                         continue
                     seen.add(key)
                     errors.append({
                         "type": "convert",
                         "row": i,
-                        "message": msg,
+                        "message": _humanize_error_message(raw_msg),
+                        "raw_message": raw_msg,
                         "detail": c.get("Description", ""),
-                        "matched": _match_known_pattern(msg),
+                        "matched": _match_known_pattern(raw_msg),
                     })
     except Exception:
         pass
@@ -820,8 +932,9 @@ class MetadataValidator:
     """
     _cache: dict[str, "MetadataValidator"] = {}
 
-    def __init__(self, metadata: dict):
+    def __init__(self, metadata: dict, form_id: str = ""):
         self.metadata = metadata
+        self.form_id = form_id or ""
         self.fields: dict[str, FieldDef] = {}
         self._parse_fields()
 
@@ -1005,19 +1118,62 @@ class MetadataValidator:
                 best_d = d
         return best
 
-    def validate_and_fix(self, payload: dict) -> tuple[dict, List[dict]]:
+    def _caption_of(self, field_name: str) -> str:
+        """取字段的中文说明（来自元数据 Caption），取不到返回空串。
+
+        支持带路径的写法，让分录内字段也能拿到中文名：
+          - 顶层字段：FSaleOrgId
+          - FBillHead 下：FBillHead.FDate
+          - 分录内字段：FSaleOrderEntry[0].FMaterialId
+        """
+        if not field_name:
+            return ""
+        d = self.fields.get(field_name)
+        if d is not None:
+            return d.caption or ""
+        if "." not in field_name:
+            return ""
+        base, _, child = field_name.partition(".")
+        # 分录内字段：Entry[行号].字段
+        entry_def = self.fields.get(base.split("[", 1)[0])
+        if entry_def is not None and entry_def.is_entry:
+            for c in entry_def.children:
+                if c.name == child:
+                    return c.caption or ""
+        # FBillHead.字段 → 顶层字段（FBillHead 的字段在解析时已平铺到顶层）
+        d = self.fields.get(child)
+        return (d.caption or "") if d is not None else ""
+
+    def validate_and_fix(self, payload: dict) -> tuple[dict, List[dict], List[dict]]:
         """
         验证并修正请求参数
 
         Returns:
-            (修正后的payload, 修正列表 [{"from": "...", "to": "...", "location": "..."}])
+            (修正后的payload, 修正列表, 未知字段列表)
+            - 修正列表 [{"from", "to", "from_zh", "to_zh", "location"}]
+              from_zh/to_zh 是字段的中文说明（取不到时为空串）
+            - 未知字段列表 [{"field", "location", "suggestion"}]
+              这些字段既不是有效字段、也没能修正 —— 静默丢弃才是最坑的，
+              必须报出来，并给出「用 kingdee_get_fields 查真实字段名」的建议。
         """
         import copy
         fixed_payload = copy.deepcopy(payload)
         fixes = []
+        unknown = []
 
         # 顶层有效字段候选集（不含分录实体名），用于纠错匹配
         head_fields = [k for k, d in self.fields.items() if not d.is_entry]
+
+        def _record(frm: str, to: str, location: str) -> None:
+            fixes.append({
+                "from": frm,
+                "to": to,
+                # from 侧往往是元数据里不存在的错拼名（如 FSalesOrgId），
+                # 取不到 Caption 时回退到静态字段词典，至少还能给出中文含义
+                "from_zh": self._caption_of(frm) or _zh_field(frm),
+                "to_zh": self._caption_of(to) or _zh_field(to),
+                "location": location,
+            })
 
         # 1. 修正顶层字段（不含 FBillHead / 已知跳过项 / 有效字段）
         for key in list(fixed_payload.keys()):
@@ -1026,7 +1182,16 @@ class MetadataValidator:
             corrected = self.find_similar_field(key, head_fields)
             if corrected:
                 fixed_payload[corrected] = fixed_payload.pop(key)
-                fixes.append({"from": key, "to": corrected, "location": "顶层"})
+                _record(key, corrected, "顶层")
+            else:
+                unknown.append({
+                    "field": key,
+                    "location": "顶层",
+                    "suggestion": (
+                        f"「{key}」不是 {self.form_id} 的有效字段，且未能自动匹配。"
+                        f"请调用 kingdee_get_fields 查该单据的真实字段名后重试。"
+                    ),
+                })
 
         # 2. 修正 FBillHead 下的字段
         if "FBillHead" in fixed_payload and isinstance(fixed_payload["FBillHead"], dict):
@@ -1037,7 +1202,16 @@ class MetadataValidator:
                 corrected = self.find_similar_field(key, head_fields)
                 if corrected:
                     bill_head[corrected] = bill_head.pop(key)
-                    fixes.append({"from": f"FBillHead.{key}", "to": f"FBillHead.{corrected}", "location": "FBillHead"})
+                    _record(f"FBillHead.{key}", f"FBillHead.{corrected}", "FBillHead")
+                else:
+                    unknown.append({
+                        "field": f"FBillHead.{key}",
+                        "location": "FBillHead",
+                        "suggestion": (
+                            f"「{key}」不是 {self.form_id} 的有效字段，且未能自动匹配。"
+                            f"请调用 kingdee_get_fields 查该单据的真实字段名后重试。"
+                        ),
+                    })
 
         # 3. 修正分录内的字段（候选集限定为该分录子字段，避免误匹配到顶层字段）
         for entry_name, entry_def in self.fields.items():
@@ -1052,9 +1226,18 @@ class MetadataValidator:
                                 corrected = self.find_similar_field(key, list(valid_entry_fields))
                                 if corrected:
                                     entry[corrected] = entry.pop(key)
-                                    fixes.append({"from": f"{entry_name}[{idx}].{key}", "to": f"{entry_name}[{idx}].{corrected}", "location": entry_name})
+                                    _record(f"{entry_name}[{idx}].{key}", f"{entry_name}[{idx}].{corrected}", entry_name)
+                                else:
+                                    unknown.append({
+                                        "field": f"{entry_name}[{idx}].{key}",
+                                        "location": entry_name,
+                                        "suggestion": (
+                                            f"「{key}」不是 {entry_name} 的有效字段，且未能自动匹配。"
+                                            f"请调用 kingdee_get_fields 查该单据的真实字段名后重试。"
+                                        ),
+                                    })
 
-        return fixed_payload, fixes
+        return fixed_payload, fixes, unknown
 
 
 def _metadata_cache_dir() -> str:
@@ -1156,7 +1339,7 @@ async def _get_metadata_validator(form_id: str, force: bool = False) -> Optional
         return None
 
     # 创建验证器并缓存
-    validator = MetadataValidator(metadata)
+    validator = MetadataValidator(metadata, form_id=form_id)
     MetadataValidator.set(form_id, validator)
     return validator
 
@@ -3525,9 +3708,10 @@ async def kingdee_save_bill(params: SaveInput) -> str:
 
         # 尝试自动修正字段名（基于元数据）
         auto_fixes = []
+        unknown_fields = []
         validator = await _get_metadata_validator(params.form_id)
         if validator:
-            model, auto_fixes = validator.validate_and_fix(model)
+            model, auto_fixes, unknown_fields = validator.validate_and_fix(model)
 
         # ⚠️ 本环境金蝶 Save 对字段顺序敏感：财务信息(含 FIN，如 FQUOTATIONFIN)
         # 必须排在分录(含 ENTRY，如 FQUOTATIONENTRY)之前，否则分录单价被判定为 0
@@ -3552,10 +3736,27 @@ async def kingdee_save_bill(params: SaveInput) -> str:
         status_data = _result_status(result, "save")
         if status_data.get("success"):
             status_data["tip"] = "单据已保存为草稿，需要提交+审核后才能生效"
-            # 如果有自动修正，记录到结果中
+            # 如果有自动修正，记录到结果中（含中文字段名）
             if auto_fixes:
                 status_data["auto_fixes"] = auto_fixes
-                status_data["tip"] += f"（自动修正了 {len(auto_fixes)} 处字段名）"
+                status_data["tip"] += f"（自动修正了 {len(auto_fixes)} 处字段名，详见 auto_fixes）"
+            # 无法识别的字段必须报出来 —— 它们会被金蝶静默丢弃，用户以为传进去了
+            if unknown_fields:
+                status_data["unknown_fields"] = unknown_fields
+                status_data["tip"] += (
+                    f"（另有 {len(unknown_fields)} 个字段无法识别、金蝶可能不认，"
+                    f"详见 unknown_fields）"
+                )
+        else:
+            # 保存失败时也要报出字段问题 —— 这才是用户真正卡住的地方
+            if auto_fixes:
+                status_data["auto_fixes"] = auto_fixes
+            if unknown_fields:
+                status_data["unknown_fields"] = unknown_fields
+                status_data["field_hint"] = (
+                    "部分字段无法识别（见 unknown_fields），"
+                    "请用 kingdee_get_fields 查该单据的真实字段名后重试"
+                )
         return _fmt(status_data)
     except Exception as e:
         return _err(e, op="save")
@@ -3646,7 +3847,7 @@ async def kingdee_validate_bill(params: SaveInput) -> str:
         if not validator:
             return _fmt({"ok": False, "error": "无法获取该表单元数据，无法校验（请检查 form_id 是否正确或网络是否可达）"})
 
-        fixed, fixes = validator.validate_and_fix(model)
+        fixed, fixes, unknown = validator.validate_and_fix(model)
 
         # 缺失必填（顶层，非分录）
         head_field_names = {k for k, d in validator.fields.items() if not d.is_entry}
@@ -3670,7 +3871,7 @@ async def kingdee_validate_bill(params: SaveInput) -> str:
                 if miss:
                     entry_issues.append({"entry": entry_name, "row": idx, "missing_required": miss})
 
-        ok = (len(missing_required) == 0 and len(entry_issues) == 0)
+        ok = (len(missing_required) == 0 and len(entry_issues) == 0 and len(unknown) == 0)
         suggestions = []
         if missing_required:
             suggestions.append(f"补齐顶层必填字段：{', '.join(missing_required)}")
@@ -3678,12 +3879,20 @@ async def kingdee_validate_bill(params: SaveInput) -> str:
             if "missing_required" in ei:
                 suggestions.append(f"{ei['entry']} 第{ei['row']}行缺失必填：{', '.join(ei['missing_required'])}")
         if fixes:
-            suggestions.append(f"保存时将自动修正 {len(fixes)} 处字段名（详见 auto_fixes）")
+            suggestions.append(
+                f"保存时将自动修正 {len(fixes)} 处字段名（详见 auto_fixes，含中文字段名对照）"
+            )
+        for u in unknown:
+            suggestions.append(
+                f"字段「{u['field']}」无法识别，将被忽略 —— "
+                f"请用 kingdee_get_fields 查真实字段名（详见 unknown_fields）"
+            )
 
         return _fmt({
             "ok": ok,
             "is_new": model.get("FID", 0) in (0, None, ""),
             "auto_fixes": fixes,
+            "unknown_fields": unknown,
             "missing_required": missing_required,
             "entry_issues": entry_issues,
             "suggestions": suggestions,
@@ -3740,7 +3949,7 @@ async def kingdee_refresh_metadata(form_id: str) -> str:
         metadata = await _query_metadata(form_id, force=True)
         if not metadata:
             return _fmt({"ok": False, "form_id": form_id, "error": "元数据拉取失败（检查 form_id / 网络 / 登录态）"})
-        validator = MetadataValidator(metadata)
+        validator = MetadataValidator(metadata, form_id=form_id)
         MetadataValidator.set(form_id, validator)
         return _fmt({
             "ok": True,
@@ -7625,6 +7834,14 @@ async def kingdee_save_production_order(params: ProductionOrderSaveInput) -> str
     try:
         model = dict(params.model)
         model.setdefault("FID", 0)
+
+        # 自动修正字段名（与 kingdee_save_bill 同口径）：生产订单同样支持元数据纠错
+        auto_fixes = []
+        unknown_fields = []
+        validator = await _get_metadata_validator("PRD_MO")
+        if validator:
+            model, auto_fixes, unknown_fields = validator.validate_and_fix(model)
+
         result = await _post_raw(
             "save", "PRD_MO", model,
             need_return_fields=["FID", "FBillNo"],
@@ -7632,6 +7849,24 @@ async def kingdee_save_production_order(params: ProductionOrderSaveInput) -> str
         status_data = _result_status(result, "save")
         if status_data.get("success"):
             status_data["tip"] = "生产订单已保存为草稿，需要提交+审核后才能下推领料单"
+            if auto_fixes:
+                status_data["auto_fixes"] = auto_fixes
+                status_data["tip"] += f"（自动修正了 {len(auto_fixes)} 处字段名，详见 auto_fixes）"
+            if unknown_fields:
+                status_data["unknown_fields"] = unknown_fields
+                status_data["tip"] += (
+                    f"（另有 {len(unknown_fields)} 个字段无法识别、金蝶可能不认，"
+                    f"详见 unknown_fields）"
+                )
+        else:
+            if auto_fixes:
+                status_data["auto_fixes"] = auto_fixes
+            if unknown_fields:
+                status_data["unknown_fields"] = unknown_fields
+                status_data["field_hint"] = (
+                    "部分字段无法识别（见 unknown_fields），"
+                    "请用 kingdee_get_fields 查生产订单的真实字段名后重试"
+                )
         return _fmt(status_data)
     except Exception as e:
         return _err(e, op="save")
