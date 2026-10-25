@@ -4,11 +4,30 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-> 当前 PyPI 版本：`0.2.2`（见 `pyproject.toml`）。本文件按功能里程碑汇总。自 `v0.2.2` 起改为打 git tag 触发自动发布。
+> 当前 PyPI 版本：`0.2.3`（见 `pyproject.toml`）。本文件按功能里程碑汇总。自 `v0.2.2` 起改为打 git tag 触发自动发布。
 
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.2.3] - 2026-10-25
+
+### Added（新增）
+
+- **单据附件上传 / 下载**（PR #32，贡献者 @todayqaq）：新增 `kingdee_upload_attachment` 与 `kingdee_download_attachment`，支持表头/分录附件、4 MiB 分块上传、下载断点续传。依据《金蝶云星空 WebAPI 接口说明书 V6.0》实现，并经真实账套联调验证：中文文件名、约 6.3 MiB PDF 的 7 块上传/下载后字节数与 SHA-256 均一致；新增 `KINGDEE_ATTACHMENT_TIMEOUT`（附件传输默认等待 120 秒，以容纳最后一块的远端存储耗时）。
+  - 上传结果不明确时返回 `outcome_unknown=true` 而非盲目重试，避免重复生成附件；日志不记录附件内容与标识。
+
+### Fixed（修复）
+
+- **无 FID 视图的基础资料查询**（issue #28，PR #29）：查 `BD_Currency` / `BD_AccountBook` / `BD_VOUCHERGROUP` / `BD_RateType` 等表单时报「列名 'FID' 无效」，即使 FieldKeys 里没写 FID 也报。根因是 `QueryInput.order_string` 默认值 `"FID DESC"` 被原样拼进 SQL —— 这些基础资料的查询视图本来就没有 FID 列，这是本包的默认值问题，不是金蝶限制。现对已知表单降级、未知表单自动去 FID 重试一次并记入运行时名单，仍失败则给出人话提示。
+
+### Changed（变更）
+
+- **对外数字与实际代码对齐**：工具数 99 → **101**、业务域 16 → **17**（新增「单据附件」域）。README / `server.json` / `SKILL.md` / 官网首页 / 官网工具列表 / 更新日志六处同步，官网工具列表的业务域卡片按代码实际分布重建为 17 个、逐域数量与 README 表格逐行一致。
+- **官网接入不蒜子访问统计**（PR #17 的功能）：页脚展示访问量与访客数。
+- **v0.2.2 首次真正发布到官方 MCP Registry**：`io.github.WaHaiLong/kingdee-mcp` 已上架，`server.json` 的 description 会原样被 lobehub / himcp / PulseMCP 等聚合站抓走展示。
 
 ---
 
